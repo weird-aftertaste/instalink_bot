@@ -1,0 +1,31 @@
+# Environment variables
+.env
+
+# Cookies and Sessions
+cookies.txt
+cookies.json
+instagram_session.json
+*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Downloaded videos
+downloads/
+*.mp4
+*.jpg
+*.png
+
+# IDE
+.vscode/
+.idea/
+
+#docs
+docs
