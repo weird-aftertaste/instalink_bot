@@ -15,18 +15,6 @@ Built with [instagrapi](https://github.com/subzeroid/instagrapi) - a fast and ef
 - 📦 Support for albums/carousels (downloads first video)
 - 🎬 Support for Reels clips with proper detection
 
-## 🆕 What's New
-
-This bot now uses **instagrapi** instead of yt-dlp, following official best practices, which means:
-
-✅ No more cookie management  
-✅ No more expired cookies errors  
-✅ Persistent login sessions with automatic reuse  
-✅ More reliable downloads via Instagram Private API  
-✅ Better error handling and recovery  
-✅ Device UUID preservation across logins  
-✅ Proper session validation and re-authentication
-
 ## 📋 Prerequisites
 
 - Python 3.8 or higher
@@ -72,7 +60,7 @@ INSTAGRAM_USERNAME=your_instagram_username
 INSTAGRAM_PASSWORD=your_instagram_password
 ```
 
-⚠️ **Important**: 
+⚠️ **Important**:
 - Use a **dedicated Instagram account** for the bot, not your personal account
 - Instagram may flag automated access on personal accounts
 - Consider creating a new account specifically for this bot
