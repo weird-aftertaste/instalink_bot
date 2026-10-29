@@ -1,31 +1,30 @@
-# Environment variables
-.env
+# Local CLI credentials and deployment state
+.tgcloud/
 
-# Cookies and Sessions
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# Secrets, cookies and sessions
+.env
+.env.*
+*.pem
+*.key
 cookies.txt
 cookies.json
 instagram_session.json
-*.json
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
-
-# Downloaded videos
+# Local media and databases
 downloads/
 *.mp4
-*.jpg
-*.png
+*.sqlite
+*.sqlite3
+*.db
 
-# IDE
+# Local tools and logs
 .vscode/
 .idea/
-
-#docs
-docs
+.DS_Store
+Thumbs.db
+*.log
