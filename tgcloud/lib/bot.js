@@ -28,7 +28,7 @@ export function createBot({ api, fetch, InputFile, cache, config, logger = conso
     const posts = extractPosts(message, config.maxLinksPerMessage);
     if (!posts.length) return;
     for (const post of posts) {
-      const params = { ...destination, caption: post.url, supports_streaming: true };
+      const params = { ...destination, supports_streaming: true };
       const fileId = await cacheCall(() => cache.get(post.shortcode));
       if (fileId) {
         try {
