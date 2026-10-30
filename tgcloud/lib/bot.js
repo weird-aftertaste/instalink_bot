@@ -1,4 +1,4 @@
-import { extractPosts, httpsHost } from './instagram.js';
+import { extractPosts, httpsHost } from './links.js';
 import { downloadVideo, MediaError, resolveVideos } from './resolver.js';
 
 // Only media-specific 400s should trigger another transfer. Permissions and
@@ -22,21 +22,21 @@ export function createBot({ api, fetch, InputFile, cache, config, logger = conso
     };
     const command = /^\/(start|help)(?:@[\w]+)?(?:\s|$)/i.exec(message.text || '');
     if (command) {
-      await api.sendMessage({ ...destination, text: 'Send an Instagram Reel or video post link. I will send the first video as a Telegram attachment. Public posts only; if downloading fails, I will offer an embed link.' });
+      await api.sendMessage({ ...destination, text: 'Send an Instagram Reel, video post, or X/Twitter post link. I will send the first video as a Telegram attachment without a caption. Public posts only; if downloading fails, I will offer an embed link.' });
       return;
     }
     const posts = extractPosts(message, config.maxLinksPerMessage);
     if (!posts.length) return;
     for (const post of posts) {
       const params = { ...destination, supports_streaming: true };
-      const fileId = await cacheCall(() => cache.get(post.shortcode));
+      const fileId = await cacheCall(() => cache.get(post.cacheKey));
       if (fileId) {
         try {
           await api.sendVideo({ ...params, video: fileId });
           continue;
         } catch (error) {
           if (!isMediaFailure(error)) throw error;
-          await cacheCall(() => cache.remove(post.shortcode));
+          await cacheCall(() => cache.remove(post.cacheKey));
         }
       }
       let sent;
@@ -65,7 +65,7 @@ export function createBot({ api, fetch, InputFile, cache, config, logger = conso
         }
       }
       if (!sent) {
-        const origin = config.embedOrigins[0];
+        const origin = post.platform === 'x' ? config.xEmbedOrigin : config.embedOrigins[0];
         const explanations = {
           TOO_LARGE: `This video exceeds my ${Math.round(config.maxUploadBytes / 1_000_000)} MB upload limit.`,
           DOWNLOAD_FAILED: 'I found the video, but could not download it. Please try again shortly.',
@@ -76,13 +76,13 @@ export function createBot({ api, fetch, InputFile, cache, config, logger = conso
         await api.sendMessage({
           ...destination,
           text: explanations[failure.code] || 'The download services did not return a video. Please try again shortly, or use the links below.',
-          reply_markup: { inline_keyboard: [[{ text: 'Open Instagram', url: post.url },
+          reply_markup: { inline_keyboard: [[{ text: post.platform === 'x' ? 'Open X' : 'Open Instagram', url: post.url },
             ...(origin ? [{ text: 'Try embed', url: `${origin.replace(/\/$/, '')}${post.path}` }] : [])]] },
         });
         continue;
       }
       // A failed cache write must never resend an already delivered video.
-      if (sent?.video?.file_id) await cacheCall(() => cache.put(post.shortcode, sent.video.file_id));
+      if (sent?.video?.file_id) await cacheCall(() => cache.put(post.cacheKey, sent.video.file_id));
     }
   };
 }

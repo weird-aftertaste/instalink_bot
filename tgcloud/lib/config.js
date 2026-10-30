@@ -4,6 +4,8 @@ export const config = {
   // Leave empty to use the public embed resolvers below.
   cobaltApiUrl: '',
   embedOrigins: ['https://www.vxinstagram.com', 'https://www.kkinstagram.com'],
+  xApiOrigin: 'https://api.fxtwitter.com',
+  xEmbedOrigin: 'https://fxtwitter.com',
   // Retry transient resolver/network failures once, within this invocation.
   fetchAttempts: 2,
   maxLinksPerMessage: 3,

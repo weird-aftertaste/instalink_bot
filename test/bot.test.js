@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createBot } from '../tgcloud/lib/bot.js';
 import { createCache } from '../tgcloud/lib/cache.js';
 import { config as defaults } from '../tgcloud/lib/config.js';
-import { extractPosts, isAllowedMediaUrl, videoFromHtml } from '../tgcloud/lib/instagram.js';
+import { extractPosts, isAllowedMediaUrl, videoFromHtml } from '../tgcloud/lib/links.js';
 import { downloadVideo, MediaError, resolveVideo } from '../tgcloud/lib/resolver.js';
 
 const source = 'https://www.instagram.com/reel/AbC123/';
@@ -265,4 +265,131 @@ test('fallback explains whether the video was too large or no metadata was avail
   await createBot(f.dependencies)(message);
   assert.match(f.calls.text[0].text, /upload limit/);
   assert.doesNotMatch(f.calls.text[0].text, /temporarily blocked/);
+});
+
+const xId = '2115886086107148719';
+const xSource = `https://x.com/NASA/status/${xId}/`;
+const xMedia = 'https://video.twimg.com/amplify_video/123/vid/avc1/1280x720/clip.mp4?tag=29';
+const xPost = extractPosts({ text: xSource })[0];
+const xResponse = (video = { type: 'video', url: xMedia, formats: [] }) => Response.json({
+  code: 200, status: { media: { videos: [video] } },
+});
+
+test('recognizes X/Twitter aliases, hidden links and mixed-source order with a shared limit', () => {
+  const posts = extractPosts({
+    text: `${xSource} ${source} https://mobile.twitter.com/another/status/${xId}?s=20 https://x.com/i/web/status/12345678901234567890`,
+  });
+  assert.deepEqual(posts.map(post => post.cacheKey), [`x:${xId}`, 'AbC123', 'x:12345678901234567890']);
+  assert.equal(posts[0].platform, 'x');
+  assert.equal(posts[0].shortcode, xId);
+  assert.equal(posts[2].url, 'https://x.com/i/status/12345678901234567890/');
+  assert.equal(extractPosts({ text: `${xSource} ${source}` }, 1)[0].platform, 'x');
+  assert.equal(extractPosts({ caption_entities: [{ type: 'text_link', url: xSource }] })[0].url, xSource);
+  assert.equal(extractPosts({ caption: `https://twitter.com/NASA/status/${xId}/video/1` })[0].cacheKey, `x:${xId}`);
+  for (const text of ['https://evilx.com/NASA/status/123', 'https://x.com.evil.com/NASA/status/123', 'https://evil.com/x.com/NASA/status/123', 'https://x.com/NASA/status/123abc', 'https://x.com/NASA/status/123456789012345678901', 'https://x.com@evil.com/NASA/status/123']) {
+    assert.equal(extractPosts({ text }).length, 0, text);
+  }
+});
+
+test('X API selects a 720p H.264 MP4 using actual CDN paths when variant dimensions are absent', async () => {
+  let requested;
+  const formats = [
+    { url: 'https://video.twimg.com/video.m3u8', container: 'm3u8' },
+    { url: 'https://video.twimg.com/vid/3840x2160/clip.mp4', container: 'mp4', codec: 'h264', bitrate: 25000000 },
+    { url: 'https://video.twimg.com/vid/1920x1080/clip.mp4', container: 'mp4', codec: 'h264', bitrate: 10000000 },
+    { url: xMedia, container: 'mp4', codec: 'h264', bitrate: 2176000 },
+    { url: 'https://video.twimg.com/vid/640x360/clip.mp4', container: 'mp4', codec: 'h264', bitrate: 832000 },
+    { url: 'https://video.twimg.com/vid/1280x720/hevc.mp4', container: 'mp4', codec: 'hevc' },
+  ];
+  const url = await resolveVideo(xPost, { config: defaults, logger, fetch: async request => {
+    requested = request;
+    return xResponse({ type: 'video', url: formats[1].url, formats });
+  } });
+  assert.equal(requested, `${defaults.xApiOrigin}/2/status/${xId}`);
+  assert.equal(url, xMedia);
+});
+
+test('X native-video cache cannot collide with a numeric Instagram shortcode and resends have no caption', async t => {
+  const f = fixture(t, { fetch: async () => xResponse() });
+  await f.cache.put(xId, 'instagram-file');
+  await f.handle({ ...message, text: xSource });
+  assert.equal(f.calls.video[0].video, xMedia);
+  assert.equal(await f.cache.get(xId), 'instagram-file');
+  assert.equal(await f.cache.get(`x:${xId}`), 'telegram-file-123');
+  f.dependencies.fetch = async () => { throw new Error('HTTP must not run for cached posts'); };
+  await createBot(f.dependencies)({ ...message, text: `https://twitter.com/other/status/${xId}` });
+  assert.equal(f.calls.video[1].video, 'telegram-file-123');
+  assert.ok(f.calls.video.every(params => !('caption' in params)));
+});
+
+test('X videos support the binary upload fallback and save the uploaded file ID', async t => {
+  const f = fixture(t);
+  f.dependencies.fetch = async url => url === xMedia ? { ...videoResponse(), url: xMedia } : xResponse();
+  f.dependencies.api.sendVideo = async params => {
+    f.calls.video.push(params);
+    if (typeof params.video === 'string') throw apiError(400, 'failed to get HTTP URL content');
+    return { video: { file_id: 'uploaded-x-file' } };
+  };
+  await createBot(f.dependencies)({ ...message, text: xSource });
+  assert.equal(f.calls.video.length, 2);
+  assert.ok(f.calls.video[1].video instanceof f.InputFile);
+  assert.equal(f.calls.video[1].video.filename, `${xId}.mp4`);
+  assert.equal(await f.cache.get(`x:${xId}`), 'uploaded-x-file');
+  assert.ok(f.calls.video.every(params => !('caption' in params)));
+});
+
+test('X API failure falls back to FxTwitter embed metadata without contacting Instagram resolvers', async () => {
+  const requests = [];
+  const url = await resolveVideo(xPost, { config: defaults, logger, fetch: async request => {
+    requests.push(request);
+    if (request.startsWith(defaults.xApiOrigin)) return new Response('Unavailable', { status: 503 });
+    return new Response(`<meta property="og:video" content="${xMedia}">`, { headers: { 'content-type': 'text/html' } });
+  } });
+  assert.equal(url, xMedia);
+  assert.equal(requests.length, 3);
+  assert.equal(requests[2], `${defaults.xEmbedOrigin}${xPost.path}`);
+  assert.ok(requests.every(url => !defaults.embedOrigins.some(origin => url.startsWith(origin))));
+});
+
+test('unavailable X posts and posts without native videos get X-specific fallback buttons', async t => {
+  for (const data of [
+    { code: 404, status: { media: { videos: [{ type: 'video', url: xMedia }] } } },
+    { code: 200, status: { media: { photos: [{ type: 'photo', url: 'https://pbs.twimg.com/image.jpg' }] } } },
+  ]) {
+    const f = fixture(t, { fetch: async url => url.startsWith(defaults.xApiOrigin) ? Response.json(data) : new Response('No metadata', { headers: { 'content-type': 'text/html' } }) });
+    await f.handle({ ...message, text: xSource });
+    assert.equal(f.calls.video.length, 0);
+    const buttons = f.calls.text[0].reply_markup.inline_keyboard[0];
+    assert.deepEqual(buttons[0], { text: 'Open X', url: xSource });
+    assert.equal(buttons[1].url, `${defaults.xEmbedOrigin}${xPost.path}`);
+  }
+});
+
+test('X video variants reject untrusted hosts, HLS and HEVC streams', async () => {
+  assert.equal(isAllowedMediaUrl('https://video.twimg.com.evil.com/file.mp4', defaults), false);
+  assert.equal(isAllowedMediaUrl('https://video.twimg.com@evil.com/file.mp4', defaults), false);
+  assert.equal(isAllowedMediaUrl('https://pbs.twimg.com/file.mp4', defaults), false);
+  await assert.rejects(resolveVideo(xPost, { config: defaults, logger, fetch: async url => {
+    if (!url.startsWith(defaults.xApiOrigin)) return new Response('No metadata', { headers: { 'content-type': 'text/html' } });
+    return xResponse({ type: 'video', url: 'https://video.twimg.com/hevc.mp4', formats: [
+      { url: 'https://video.twimg.com/file.m3u8', container: 'm3u8' },
+      { url: 'https://video.twimg.com/hevc.mp4', container: 'mp4', codec: 'hevc' },
+      { url: 'https://evil.com/file.mp4', container: 'mp4', codec: 'h264' },
+    ] });
+  } }), MediaError);
+});
+
+test('X stale cache entries are refreshed and Telegram flood-control errors still propagate', async t => {
+  const f = fixture(t, { fetch: async () => xResponse() });
+  await f.cache.put(`x:${xId}`, 'stale-x-file');
+  f.dependencies.api.sendVideo = async params => {
+    f.calls.video.push(params);
+    if (params.video === 'stale-x-file') throw apiError(400, 'wrong file identifier');
+    return { video: { file_id: 'fresh-x-file' } };
+  };
+  await f.handle({ ...message, text: xSource });
+  assert.equal(await f.cache.get(`x:${xId}`), 'fresh-x-file');
+  f.dependencies.api.sendVideo = async () => { throw apiError(429, 'Too Many Requests'); };
+  await assert.rejects(f.handle({ ...message, text: xSource }), { code: 429 });
+  assert.equal(f.calls.text.length, 0);
 });

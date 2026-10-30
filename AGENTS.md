@@ -7,7 +7,7 @@ and true. For the full SDK reference (db, Bot API, fetch), see
 
 ## What this project is
 
-A **Telegram Instagram video bot** running on Telegram's serverless platform. You write
+A **Telegram Instagram and X video bot** running on Telegram's serverless platform. You write
 JavaScript modules (database schema, shared library code, update handlers); the
 platform runs them in a V8 isolate. The `tgcloud` CLI syncs this local project
 with the bot's cloud environment — think `wrangler`/`vercel` + `drizzle-kit`.
@@ -18,7 +18,9 @@ in this project.
 
 `tgcloud/lib/bot.js` orchestrates resolution, sending, and caching. Public settings
 live in `tgcloud/lib/config.js`; `resolver.js` supports embed metadata and an optional
-Cobalt API. `cache.js` uses parameterized SQLite queries. Keep secrets out of code.
+Cobalt API, plus the FxTwitter v2 API for X posts. `links.js` parses source URLs
+and validates media hosts. `cache.js` uses parameterized SQLite queries. Existing
+Instagram cache keys are preserved; X cache keys use the `x:` prefix. Keep secrets out of code.
 This repository contains only the serverless implementation.
 
 Run `npm test` (Node 22.13+; SQLite integration and mocked Telegram/HTTP) and

@@ -1,4 +1,4 @@
-import { httpsHost, isAllowedMediaUrl, videoFromHtml } from './instagram.js';
+import { httpsHost, isAllowedMediaUrl, videoFromHtml } from './links.js';
 
 export class MediaError extends Error {
   constructor(message, code = 'RESOLVE_FAILED', details = {}) {
@@ -60,7 +60,50 @@ export async function* resolveVideos(post, { fetch, config, logger = console }) 
       logger.warn('Cobalt resolution failed', { code: error.code || 'PROVIDER_RESPONSE', ...error.details });
     }
   }
-  for (const origin of config.embedOrigins) {
+  if (post.platform === 'x' && config.xApiOrigin) {
+    try {
+      if (!httpsHost(config.xApiOrigin)) throw new MediaError('FxTwitter requires HTTPS.');
+      const response = await fetchWithRetry(`${config.xApiOrigin.replace(/\/$/, '')}/2/status/${post.shortcode}`, {
+        headers: { Accept: 'application/json' },
+      }, dependencies);
+      if (!response.ok) throw new MediaError('FxTwitter is unavailable.', 'PROVIDER_HTTP', { status: response.status });
+      const data = await response.json();
+      if (data.code !== 200) throw new MediaError('The X post is unavailable.', 'POST_UNAVAILABLE');
+      const videos = data.status?.media?.videos || data.status?.media?.all || [];
+      const video = videos.find(item => item.type === 'video' || item.type === 'gif');
+      if (!video) throw new MediaError('The X post does not contain a video.', 'NO_VIDEO');
+      // Prefer H.264 MP4 variants at up to 720p. HLS and separate audio/video
+      // streams cannot be assembled inside this runtime.
+      const formats = (video.formats || []).filter(format =>
+        (format.container === 'mp4' || /\.mp4(?:[?#]|$)/i.test(format.url || '')) &&
+        (!format.codec || format.codec === 'h264') && isAllowedMediaUrl(format.url, config)
+      ).map(format => {
+        // Live responses may omit width/height on variants. The Twitter CDN
+        // path includes dimensions, e.g. /vid/avc1/1280x720/file.mp4.
+        const dimensions = /\/(\d{2,5})x(\d{2,5})\//.exec(format.url);
+        const width = format.width || Number(dimensions?.[1]) || 0;
+        const height = format.height || Number(dimensions?.[2]) || 0;
+        return { ...format, resolution: width && height ? Math.min(width, height) : height };
+      }).sort((a, b) => {
+        const aOver = a.resolution > 720 ? 1 : 0;
+        const bOver = b.resolution > 720 ? 1 : 0;
+        return aOver - bOver || b.resolution - a.resolution || (b.bitrate || 0) - (a.bitrate || 0);
+      });
+      const incompatibleDefault = (video.formats || []).some(format => format.url === video.url &&
+        ((format.codec && format.codec !== 'h264') || (format.container && format.container !== 'mp4')));
+      const urls = formats.length ? formats.slice(0, 3).map(format => format.url) : (incompatibleDefault ? [] : [video.url]);
+      for (const url of urls) {
+        if (isAllowedMediaUrl(url, config) && /\.mp4(?:[?#]|$)/i.test(url) && !seen.has(url)) {
+          seen.add(url);
+          yield url;
+        }
+      }
+    } catch (error) {
+      logger.warn('FxTwitter resolution failed', { provider: httpsHost(config.xApiOrigin), code: error.code || 'PROVIDER_RESPONSE', ...error.details });
+    }
+  }
+  const embedOrigins = post.platform === 'x' ? [config.xEmbedOrigin].filter(Boolean) : config.embedOrigins;
+  for (const origin of embedOrigins) {
     try {
       if (!httpsHost(origin)) continue;
       const response = await fetchWithRetry(`${origin.replace(/\/$/, '')}${post.path}`, {
